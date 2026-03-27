@@ -1,6 +1,6 @@
 # Bond Data Intelligence Platform
 
-> Unified query platform for time-split bond data — intelligent routing across dual MongoDB systems, with NLP query interface and RAG layer on the roadmap.
+> Unified query platform for time-split bond data — three ways to query: structured API, NLP free-text, and RAG-grounded prospectus validation.
 
 ---
 
@@ -49,11 +49,11 @@ Legacy MongoDB               Current MongoDB
 
 ## Release Roadmap
 
-| Release | Capability | AI Involvement |
-|---------|-----------|----------------|
-| Day 1 ✅ | REST API — ISIN + date range routing | None — pure intelligent routing |
-| Day 2 🔜 | NLP free-text query interface | LLM extracts structured parameters |
-| Day 3 🗺️ | RAG-powered answers | Vector retrieval + LLM generation over bond snapshots |
+| Release | Query Method | Capability | AI Involvement |
+|---------|-------------|-----------|----------------|
+| Day 1 ✅ | Structured API | `GET /api/v1/bonds` — explicit ISIN + date range, temporal routing across dual MongoDB | None — pure intelligent routing |
+| Day 2 🔜 | NLP Query | `POST /api/v1/query` — free-text query, LLM extracts ISIN + date range | LLM extracts structured parameters from natural language |
+| Day 3 🗺️ | NLP + RAG | `POST /api/v1/query` — same interface, answers grounded in bond prospectus PDFs | RAG over prospectus PDFs — vector retrieval + LLM generation with mismatch detection |
 
 ---
 
