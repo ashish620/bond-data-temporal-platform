@@ -1,128 +1,231 @@
 # Bond Data Intelligence Platform
 
-Unified query platform for time-split bond data — intelligent routing across dual MongoDB systems, with NLP query interface and a prospectus-grounded RAG validation layer on the roadmap.
+> Unified query platform for time-split bond data — intelligent routing across dual MongoDB systems, with NLP query interface and RAG layer on the roadmap.
 
 ---
 
-## Architecture
+## Why This Exists
+
+This project originated from a real business problem identified and proposed at a previous firm — security master data for bonds was siloed across two systems with a hard time boundary, making unified querying impossible without manual intervention. Rather than proposing a simple data migration, this platform abstracts the time-split complexity entirely — routing queries intelligently across systems and merging results seamlessly into a single unified response.
+
+---
+
+## Data Architecture
 
 ```
 Bloomberg Terminal
       ↓
 Historical Data Pull
       ↓
-Cleanse & Deduplicate          ← upstream, before platform
-      ↓                                    ↓
-Legacy MongoDB (port 27017)    Current MongoDB (port 27018)
-[snapshots before 2026-01-01]  [snapshots from 2026-01-01]
-      ↓                                    ↓
-      └──────────── TemporalRouter ─────────┘
-                          ↓
-                  Unified API Response
+Cleanse & Deduplicate (upstream — before platform)
+      ↓                             ↓
+Legacy MongoDB               Current MongoDB
+(pre 2026-01-01)             (from 2026-01-01)
+      ↓                             ↓
+      └────────── TemporalRouter ───┘
+                       ↓
+             Unified API Response
 ```
+
+**Data integrity note:** Deduplication happens upstream during the Bloomberg data pull — before data enters this platform. Legacy MongoDB is guaranteed clean with no overlap against Current MongoDB. The `TemporalRouter` simply merges and sorts results across the time boundary without additional deduplication.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| API Framework | **FastAPI** | Async, fast, auto-generates docs |
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| API Framework | **FastAPI** | Async REST API with auto-generated docs |
 | DB Driver | **Motor** | Async MongoDB driver for Python |
-| Data Models | **Pydantic v2** | Validation + serialisation |
-| Parallel Queries | **asyncio** | Both DBs queried simultaneously |
-| Databases | **MongoDB x2** | One legacy, one current |
-| Containerisation | **Docker Compose** | Spins up both DBs instantly |
+| Data Models | **Pydantic v2** | Validation and serialisation |
+| Parallel Queries | **asyncio** | Both DBs queried simultaneously when needed |
+| Databases | **MongoDB × 2** | Legacy (port 27017) and Current (port 27018) |
+| Containerisation | **Docker Compose** | Spins up full infrastructure instantly |
 | Testing | **pytest + pytest-asyncio** | Async test support |
 | Server | **uvicorn** | ASGI server for FastAPI |
 | Language | **Python 3.11** | |
 
 ---
 
-## Query Routing Logic
-
-```
-User Request: GET /api/v1/bonds?isin=XS1234&from_date=2025-06-01&to_date=2026-03-01
-
-TemporalRouter checks dates against CUTOFF_DATE (2026-01-01):
-
-from_date < CUTOFF and to_date < CUTOFF  → Legacy DB only
-from_date >= CUTOFF                       → Current DB only
-from_date < CUTOFF and to_date >= CUTOFF → Both DBs in parallel (asyncio.gather)
-                                            → Merge results
-                                            → Sort by snapshot_date
-                                            → Paginate
-                                            → Return with sources: "both"
-```
-
----
-
 ## Release Roadmap
 
 | Release | Capability | AI Involvement |
-|---------|-----------|---------------|
-| Day 1 ✅ | REST API — ISIN + date range routing across dual MongoDB systems | None — pure intelligent routing |
-| Day 2 🔜 | NLP free-text query interface | LLM extracts structured ISIN + date parameters from natural language |
-| Day 3 🗺️ | Prospectus-Grounded Security Master Validation | Bond prospectuses/certificates ingested as PDFs → chunked and embedded into vector store → quants query call/put/conversion schedules in natural language → discrepancies between security master data and source documents surfaced automatically |
+|---------|-----------|----------------|
+| Day 1 ✅ | REST API — ISIN + date range routing | None — pure intelligent routing |
+| Day 2 🔜 | NLP free-text query interface | LLM extracts structured parameters |
+| Day 3 🗺️ | RAG-powered answers | Vector retrieval + LLM generation over bond snapshots |
 
 ---
 
-## Day 3 Vision — Prospectus-Grounded Security Master Validation
+## Setup
 
-### The Problem
+### Prerequisites
+- Docker and Docker Compose installed
 
-When data disputes arise in security master — particularly around call schedules, put
-schedules, and conversion schedules — the final word has always been the original bond
-prospectus or certificate. In practice, quants with access to these documents would
-manually read through them to resolve mismatches.
+### Run with Docker Compose
 
-Nobody had made those documents machine-queryable. Until now.
+```bash
+# Clone the repo
+git clone https://github.com/ashish620/bond-data-intelligence-platform.git
+cd bond-data-intelligence-platform
 
-### What Day 3 Builds
+# Copy environment variables
+cp .env.example .env
 
-Bond prospectuses and certificates (PDFs) are ingested into a vector store.
-Quants query them in natural language. The RAG layer retrieves relevant sections
-and generates a grounded answer — citing the exact prospectus clause.
-
-### Example Queries
-
-**Call schedule:**
-> "What is the call schedule for ISIN XS1234567890?"
-> → "Per Offering Circular (page 147): call dates 15 Jun 2024, 2025, 2026 at par + 0.5% premium. Security master shows par flat — mismatch flagged."
-
-**Fixed coupon:**
-> "What is the coupon rate and day count for ISIN XS1111111111?"
-> → "Per Final Terms (page 12): 3.875% per annum, semi-annual, 30/360. Security master shows 3.850% — mismatch flagged."
-
-**Floating coupon:**
-> "What is the coupon formula for ISIN XS9999999999?"
-> → "Per Offering Circular (page 34): 3M EURIBOR + 125bps, quarterly reset, Act/360, floor 0%. Security master spread shows 120bps — mismatch flagged."
-
-### Document Types Supported
-
-| Document | What it contains |
-|----------|-----------------|
-| Prospectus / Offering Circular | Full bond terms — call/put/conversion schedules, covenants |
-| Final Terms | Specific economic terms for that ISIN |
-| Pricing Supplement | Amendments to base prospectus |
-| Corporate Action Notices | Restructurings, early redemptions, consent solicitations |
-
-### Architecture
-
-```
-Bond Prospectus PDFs (per ISIN)
-        ↓
-PDF Ingestion Pipeline
-        ↓
-Chunking + Embedding (OpenAI / sentence-transformers)
-        ↓
-Vector Store (Chroma / Pinecone)
-        ↓
-RAG Query Engine
-        ↓
-POST /api/v3/validate/{isin}    ← natural language query against prospectus
-        ↓
-Grounded answer + prospectus citation + mismatch flag if differs from security master
+# Start all services (MongoDB ×2 + seed data + API)
+docker compose up --build
 ```
 
-See [`day3/README.md`](day3/README.md) for full Day 3 component documentation.
+The API will be available at **http://localhost:8000**.
+
+Interactive API docs (Swagger UI): **http://localhost:8000/docs**
+
+---
+
+## API Documentation
+
+### `GET /api/v1/bonds`
+
+Query bond snapshots by ISIN and date range.
+
+**Query parameters:**
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `isin` | ✅ | — | Bond ISIN identifier e.g. `XS1234567890` |
+| `from_date` | ✅ | — | Start date `YYYY-MM-DD` |
+| `to_date` | ✅ | — | End date `YYYY-MM-DD` |
+| `page` | ❌ | `1` | Page number |
+| `page_size` | ❌ | `20` | Results per page (max 100) |
+
+**Example — Legacy DB only (pre-2026):**
+
+```bash
+curl "http://localhost:8000/api/v1/bonds?isin=XS1234567890&from_date=2025-01-01&to_date=2025-12-31"
+```
+
+```json
+{
+  "data": [
+    {
+      "isin": "XS1234567890",
+      "snapshot_date": "2025-01-15",
+      "issuer_name": "Acme Corp",
+      "maturity_date": "2030-01-15",
+      "coupon_rate": 3.5,
+      "currency": "USD",
+      "face_value": 1000.0,
+      "source": "legacy"
+    }
+  ],
+  "total": 3,
+  "page": 1,
+  "page_size": 20,
+  "sources": "legacy"
+}
+```
+
+**Example — Both DBs (query spans 2026-01-01):**
+
+```bash
+curl "http://localhost:8000/api/v1/bonds?isin=XS1234567890&from_date=2025-06-01&to_date=2026-06-30"
+```
+
+```json
+{
+  "data": [...],
+  "total": 4,
+  "page": 1,
+  "page_size": 20,
+  "sources": "both"
+}
+```
+
+### `POST /api/v1/query` *(stubbed — Day 2)*
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/query"
+```
+
+```json
+{
+  "message": "NLP query interface coming in Day 2 — LLM will extract structured parameters from natural language input",
+  "status": "not_implemented"
+}
+```
+
+---
+
+## Running Tests
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run all tests
+pytest
+
+# Run with verbose output
+pytest -v
+
+# Run specific test file
+pytest tests/test_router.py -v
+pytest tests/test_api.py -v
+```
+
+Tests do **not** require running MongoDB instances — all DB interactions are mocked.
+
+---
+
+## Project Structure
+
+```
+bond-data-intelligence-platform/
+│
+├── app/
+│   ├── main.py              ← FastAPI app entry point
+│   ├── config.py            ← CUTOFF_DATE and DB settings
+│   ├── router.py            ← TemporalRouter core engine
+│   ├── models.py            ← Bond data models (Pydantic v2)
+│   └── api/
+│       └── bonds.py         ← API endpoints
+│
+├── tests/
+│   ├── test_router.py       ← Routing logic and boundary condition tests
+│   └── test_api.py          ← API endpoint and pagination tests
+│
+├── seed/
+│   └── seed_data.py         ← Seed script for both MongoDB containers
+│
+├── docker-compose.yml       ← Two MongoDB containers + seed service
+├── Dockerfile
+├── requirements.txt         ← All Python dependencies
+├── .env.example             ← MongoDB connection string placeholders
+└── README.md
+```
+
+---
+
+## Routing Logic
+
+```
+Query: isin=XS1234567890, from_date=2025-06-01, to_date=2026-03-01
+
+TemporalRouter checks against CUTOFF_DATE = 2026-01-01:
+
+from_date < CUTOFF AND to_date < CUTOFF  → Legacy DB only   → sources: "legacy"
+from_date >= CUTOFF                       → Current DB only  → sources: "current"
+from_date < CUTOFF AND to_date >= CUTOFF → Both in parallel  → sources: "both"
+                                            ↓
+                                      asyncio.gather()
+                                            ↓
+                                    Merge + sort by date
+                                            ↓
+                                    Paginate + respond
+```
+
+---
+
+## License
+
+MIT
