@@ -33,6 +33,25 @@ class ProspectusQueryEngine:
     Retrieves relevant clauses and generates grounded answers with citations.
     Flags mismatches against security master data automatically.
 
+    # Coupon validation — real-world complexity:
+    #
+    # Fixed rate bonds:
+    #   Security master has a single coupon_rate float (e.g. 3.875)
+    #   Prospectus states: "3.875% per annum, semi-annual, 30/360"
+    #   Validation: compare rate + frequency + day count convention
+    #
+    # Floating rate bonds:
+    #   Security master has: reference_rate="3M EURIBOR", spread=125,
+    #                        day_count="Act/360", reset_freq="quarterly",
+    #                        floor=0.0, cap=None
+    #   Prospectus states the formula in natural language — RAG must extract
+    #   all components and compare each against security master fields
+    #   Any single field mismatch → flag the specific field, not just "mismatch"
+    #
+    # This was a real pain point — quants would manually verify floating rate
+    # coupon formulas from prospectuses when Bloomberg feed data showed
+    # discrepancies in spread, day count, or reset frequency.
+
     Usage (planned):
         engine = ProspectusQueryEngine(document_store=store, llm_model="gpt-4")
         result = engine.query(

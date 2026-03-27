@@ -84,18 +84,19 @@ Bond prospectuses and certificates (PDFs) are ingested into a vector store.
 Quants query them in natural language. The RAG layer retrieves relevant sections
 and generates a grounded answer — citing the exact prospectus clause.
 
-**Example query:**
-```
-"What is the call schedule for ISIN XS1234567890?"
-```
+### Example Queries
 
-**Example response:**
-```
-"Per the Offering Circular dated 12 March 2019 (page 147), XS1234567890 has
-call dates on 15 June 2024, 15 June 2025, and 15 June 2026, each at par plus
-a 0.5% call premium. This differs from the current security master value of
-[par flat] — potential data issue flagged."
-```
+**Call schedule:**
+> "What is the call schedule for ISIN XS1234567890?"
+> → "Per Offering Circular (page 147): call dates 15 Jun 2024, 2025, 2026 at par + 0.5% premium. Security master shows par flat — mismatch flagged."
+
+**Fixed coupon:**
+> "What is the coupon rate and day count for ISIN XS1111111111?"
+> → "Per Final Terms (page 12): 3.875% per annum, semi-annual, 30/360. Security master shows 3.850% — mismatch flagged."
+
+**Floating coupon:**
+> "What is the coupon formula for ISIN XS9999999999?"
+> → "Per Offering Circular (page 34): 3M EURIBOR + 125bps, quarterly reset, Act/360, floor 0%. Security master spread shows 120bps — mismatch flagged."
 
 ### Document Types Supported
 
