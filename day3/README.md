@@ -91,6 +91,50 @@ Grounded answer + prospectus citation + mismatch flag
 
 ---
 
+## Coupon Validation — Fixed and Floating Rate Bonds
+
+Coupon data in security master is a frequent source of disputes, particularly for floating rate bonds where the coupon formula involves multiple components sourced from the prospectus.
+
+### Fixed Rate Bonds
+The prospectus states coupon rate, frequency, and day count convention explicitly.
+RAG validates all three against security master — a common mismatch is day count convention
+(e.g. security master has Act/365 but prospectus states 30/360).
+
+### Floating Rate Bonds
+The coupon formula is defined in natural language in the prospectus:
+> "The Notes will bear interest at a rate equal to 3-month EURIBOR plus a margin
+> of 1.25 per cent. per annum, reset quarterly, calculated on an Act/360 basis,
+> subject to a minimum rate of zero per cent. per annum."
+
+RAG extracts:
+- Reference rate: 3M EURIBOR
+- Spread: 125bps
+- Reset frequency: quarterly
+- Day count: Act/360
+- Floor: 0%
+- Cap: none
+
+Each component is then validated against the corresponding security master field.
+A mismatch in spread of even 5bps can have significant P&L impact at scale.
+
+### Validatable Fields
+| Field | Fixed | Floating | Why it matters |
+|-------|-------|----------|----------------|
+| coupon_rate | ✅ | ❌ | Core economic term |
+| coupon_formula | ❌ | ✅ | Full floating rate definition |
+| reference_rate | ❌ | ✅ | SOFR vs EURIBOR mix-up common |
+| spread | ❌ | ✅ | 5bps error = material at scale |
+| day_count_convention | ✅ | ✅ | Affects accrual calculation |
+| coupon_frequency | ✅ | ✅ | Semi-annual vs quarterly |
+| reset_frequency | ❌ | ✅ | Monthly vs quarterly |
+| coupon_floor | ❌ | ✅ | 0% floor important post-negative rates |
+| coupon_cap | ❌ | ✅ | Caps affect structured products |
+| call_schedule | ✅ | ✅ | Call dates + premium |
+| put_schedule | ✅ | ✅ | Put dates + price |
+| conversion_schedule | ✅ | ✅ | Convertible bond terms |
+
+---
+
 ## Component Structure
 
 ```
