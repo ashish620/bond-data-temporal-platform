@@ -1,4 +1,6 @@
-# Day 3 — Prospectus-Grounded Security Master Validation
+# Day 3 — NLP + RAG: Prospectus-Grounded Security Master Validation
+
+This is the third and most advanced query mode — the same natural language interface as Day 2 (`POST /api/v1/query`) but now grounded in actual bond prospectus PDFs. Instead of LLM answers from parametric knowledge, every answer is retrieved from and cited to the original bond documents stored in a ChromaDB vector store.
 
 ## The Problem
 
@@ -27,12 +29,16 @@ manual lookup entirely.
 ## Architecture
 
 ```
+Natural language query (e.g. "What is the call schedule for XS1234567890?")
+        ↓
+LLM extracts ISIN + question intent
+        ↓
 Bond Prospectus PDFs (per ISIN)
         ↓
 PDF Ingestion Pipeline         ← day3/ingestion/pdf_ingester.py
         ↓
 Chunking + Embedding           ← OpenAI text-embedding-ada-002
-(chunk_size=1000, overlap=200)    or sentence-transformers/all-MiniLM-L6-v2
+(chunk_size=1000, overlap=200)
         ↓
 Vector Store (ChromaDB)        ← day3/ingestion/document_store.py
 (keyed by ISIN + document_type)
