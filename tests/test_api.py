@@ -437,14 +437,16 @@ def test_missing_required_params_returns_422(client):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/query — stubbed NLP endpoint
+# POST /api/v1/query — NLP endpoint (no API key → 503)
 # ---------------------------------------------------------------------------
 
 
-def test_nlp_query_returns_501(client):
-    """POST /api/v1/query should return 200 with not_implemented status."""
-    resp = client.post("/api/v1/query")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "not_implemented"
-    assert "Day 2" in body["message"]
+def test_nlp_query_returns_503_without_api_key(client):
+    """POST /api/v1/query should return 503 when OPENAI_API_KEY is not configured."""
+    with patch.dict("os.environ", {}, clear=True):
+        import os
+
+        os.environ.pop("OPENAI_API_KEY", None)
+        resp = client.post("/api/v1/query", json={"query": "Show me XS1234567890 Q1 2025"})
+    assert resp.status_code == 503
+    assert "OPENAI_API_KEY" in resp.json()["detail"]

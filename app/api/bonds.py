@@ -2,12 +2,14 @@
 API endpoints for Bond Data Intelligence Platform.
 """
 
+import os
 from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.models import BondQueryResponse, BondSnapshot
+from app.models import BondQueryResponse, BondSnapshot, NLPQueryRequest, NLPQueryResponse
+from app.nlp.extractor import NLPExtractor
 from app.router import TemporalRouter
 
 router = APIRouter()
@@ -56,17 +58,48 @@ async def get_bonds(
     )
 
 
-@router.post("/query")
-async def nlp_query() -> dict:
+@router.post("/query", response_model=NLPQueryResponse)
+async def nlp_query(
+    request: NLPQueryRequest,
+    temporal_router: TemporalRouter = Depends(get_temporal_router),
+) -> NLPQueryResponse:
     """
-    Stubbed NLP query endpoint — coming in Day 2.
+    Query bond snapshots using natural language.
 
-    # TODO Day 2: integrate LLM here to extract isin and date range from natural language
+    The LLM extracts the ISIN and date range from free-text input,
+    then routes intelligently to Legacy DB, Current DB, or both via TemporalRouter.
+
+    Example queries:
+      - "Show me XS1234567890 bonds from Q1 2025"
+      - "Get bond data for XS1234567890 between January and June 2026"
+      - "XS1234567890 last 6 months"
     """
-    return {
-        "message": (
-            "NLP query interface coming in Day 2 — LLM will extract structured "
-            "parameters from natural language input"
-        ),
-        "status": "not_implemented",
-    }
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+
+    extractor = NLPExtractor()
+    try:
+        params = await extractor.extract(request.query)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    all_snapshots, sources = await temporal_router.query(
+        params.isin, params.from_date, params.to_date
+    )
+
+    total = len(all_snapshots)
+    start = (request.page - 1) * request.page_size
+    end = start + request.page_size
+    page_data: list[BondSnapshot] = all_snapshots[start:end]
+
+    return NLPQueryResponse(
+        natural_query=request.query,
+        extracted_isin=params.isin,
+        extracted_from_date=params.from_date,
+        extracted_to_date=params.to_date,
+        data=page_data,
+        total=total,
+        page=request.page,
+        page_size=request.page_size,
+        sources=sources,
+    )
