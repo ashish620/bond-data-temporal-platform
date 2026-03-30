@@ -2,10 +2,59 @@
 FastAPI application entry point for Bond Data Intelligence Platform.
 """
 
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.bonds import router as bonds_router
 from day3.api.validate import router as validate_router
+
+logger = logging.getLogger(__name__)
+
+SEED_ISIN = "XS1234567890"
+
+
+def _seed_if_needed() -> None:
+    """
+    Synchronous seed function — run in a thread pool executor to avoid
+    blocking the async event loop.
+
+    Checks if the prospectus for SEED_ISIN is already in ChromaDB.
+    If not, generates the synthetic PDF and ingests it.
+    """
+    try:
+        from day3.ingestion.document_store import DocumentStore
+        from day3.ingestion.seed_sample import PDF_PATH, create_prospectus_pdf
+        from day3.ingestion.pdf_ingester import PDFIngester
+
+        store = DocumentStore()
+        if store.collection_exists(SEED_ISIN):
+            logger.info("Prospectus already seeded for %s — skipping", SEED_ISIN)
+            return
+
+        logger.info("Seeding prospectus for %s ...", SEED_ISIN)
+        pdf_path = create_prospectus_pdf(PDF_PATH)
+        ingester = PDFIngester()
+        n = ingester.ingest_sync(str(pdf_path), SEED_ISIN, document_type="prospectus", force=True)
+        logger.info("Seeded prospectus for %s — %d chunks stored", SEED_ISIN, n)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Prospectus auto-seed failed (non-fatal): %s. "
+            "POST /api/v3/validate/{isin} will return 404 until seeded.",
+            exc,
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Run seed in thread pool so it doesn't block the event loop
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _seed_if_needed)
+    yield
+
 
 app = FastAPI(
     title="Bond Data Intelligence Platform",
@@ -15,6 +64,7 @@ app = FastAPI(
         "and RAG-grounded prospectus validation (Day 3 — live)."
     ),
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.include_router(bonds_router, prefix="/api/v1")
