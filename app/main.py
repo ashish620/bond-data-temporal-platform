@@ -37,7 +37,7 @@ def _seed_if_needed() -> None:
         logger.info("Seeding prospectus for %s ...", SEED_ISIN)
         pdf_path = create_prospectus_pdf(PDF_PATH)
         ingester = PDFIngester()
-        n = ingester.ingest_sync(str(pdf_path), SEED_ISIN, document_type="prospectus", force=True)
+        n = ingester.ingest_sync(str(pdf_path), SEED_ISIN, document_type="prospectus", force=True)  # force overwrites any partial data
         logger.info("Seeded prospectus for %s — %d chunks stored", SEED_ISIN, n)
 
     except Exception as exc:  # noqa: BLE001
@@ -50,6 +50,14 @@ def _seed_if_needed() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan context manager.
+
+    On startup: auto-seeds the ChromaDB vector store with the synthetic
+    prospectus PDF for SEED_ISIN if not already present. Runs the blocking
+    seed work in a thread pool executor to avoid stalling the async event loop.
+    On shutdown: nothing special needed.
+    """
     # Run seed in thread pool so it doesn't block the event loop
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _seed_if_needed)
