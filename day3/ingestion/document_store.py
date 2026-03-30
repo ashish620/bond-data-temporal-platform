@@ -1,36 +1,102 @@
-# Day 3 — Document Store
-#
-# Purpose: Abstraction layer over ChromaDB vector store.
-# Provides methods to:
-#   - store_document(isin, chunks, embeddings, metadata)
-#   - query_document(isin, query_text, top_k=5)
-#   - list_documents() — show all ISINs with ingested prospectuses
-#   - delete_document(isin) — remove all chunks for an ISIN
-#
-# ChromaDB chosen for Day 3 because:
-#   - Runs locally, no external service needed
-#   - Easy to swap for Pinecone/Weaviate in production
-#   - Supports metadata filtering (filter by isin, document_type)
-#
-# TODO Day 3: Implement DocumentStore class
+"""
+Day 3 — Document Store
+
+Abstraction layer over ChromaDB for bond prospectus storage and retrieval.
+Collections are named bonds_{isin}, e.g. bonds_XS1234567890.
+"""
+
+import os
+
+import chromadb
 
 
 class DocumentStore:
     """
     Abstraction over ChromaDB for bond prospectus storage and retrieval.
 
-    Usage (planned):
-        store = DocumentStore(persist_dir="./chroma_db")
-        store.store_document(
-            isin="XS1234567890",
-            chunks=["...text chunk 1...", "...text chunk 2..."],
-            embeddings=[[0.1, 0.2, ...], [0.3, 0.4, ...]],
-            metadata=[
-                {"isin": "XS1234567890", "document_type": "prospectus", "page_number": 147, "source_file": "OC_2019.pdf"},
-                {"isin": "XS1234567890", "document_type": "prospectus", "page_number": 148, "source_file": "OC_2019.pdf"},
-            ]
-        )
-        results = store.query_document(isin="XS1234567890", query_text="call schedule", top_k=5)
+    Each ISIN gets its own ChromaDB collection named bonds_{isin}.
+    Chunks are stored with their pre-computed embeddings and metadata.
     """
 
-    pass  # TODO Day 3
+    def __init__(self, persist_dir: str | None = None) -> None:
+        self._persist_dir = persist_dir or os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+        self._client = chromadb.PersistentClient(path=self._persist_dir)
+
+    def _collection_name(self, isin: str) -> str:
+        return f"bonds_{isin}"
+
+    def get_or_create_collection(self, isin: str) -> chromadb.Collection:
+        """Return (or create) the ChromaDB collection for the given ISIN."""
+        return self._client.get_or_create_collection(
+            name=self._collection_name(isin),
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def add_chunks(self, isin: str, chunks: list[dict]) -> None:
+        """
+        Store pre-embedded chunks in the collection for the given ISIN.
+
+        Each chunk dict must contain: text, page, document, chunk_id, embedding.
+        """
+        collection = self.get_or_create_collection(isin)
+        collection.add(
+            ids=[chunk["chunk_id"] for chunk in chunks],
+            embeddings=[chunk["embedding"] for chunk in chunks],
+            documents=[chunk["text"] for chunk in chunks],
+            metadatas=[
+            {
+                "page": chunk["page"],
+                "document": chunk["document"],
+                **( {"document_type": chunk["document_type"]} if chunk.get("document_type") else {} ),
+            }
+            for chunk in chunks
+        ],
+        )
+
+    def query(self, isin: str, query_embedding: list[float], n_results: int = 5) -> list[dict]:
+        """
+        Retrieve the top-n most relevant chunks for the given ISIN.
+
+        Returns a list of dicts with keys: text, page, document, distance.
+        """
+        collection = self.get_or_create_collection(isin)
+        count = collection.count()
+        if count == 0:
+            return []
+        effective_n = min(n_results, count)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=effective_n,
+        )
+        chunks: list[dict] = []
+        for i, doc in enumerate(results["documents"][0]):  # type: ignore[index]
+            meta = results["metadatas"][0][i]  # type: ignore[index]
+            distance = (
+                results["distances"][0][i]  # type: ignore[index]
+                if results.get("distances")
+                else 1.0
+            )
+            chunks.append(
+                {
+                    "text": doc,
+                    "page": meta.get("page", 0),
+                    "document": meta.get("document", ""),
+                    "distance": distance,
+                }
+            )
+        return chunks
+
+    def collection_exists(self, isin: str) -> bool:
+        """Return True if the collection for the given ISIN has at least one document."""
+        try:
+            collection = self._client.get_collection(self._collection_name(isin))
+            return collection.count() > 0
+        except Exception:
+            return False
+
+    def delete_collection(self, isin: str) -> None:
+        """Delete the collection for the given ISIN (used for re-ingestion)."""
+        try:
+            self._client.delete_collection(self._collection_name(isin))
+        except Exception:
+            pass
