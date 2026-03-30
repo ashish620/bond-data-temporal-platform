@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Seed script — generates a synthetic bond prospectus PDF for ISIN XS1234567890
+Seed script - generates a synthetic bond prospectus PDF for ISIN XS1234567890
 and ingests it into ChromaDB.
 
 The call schedule in the PDF intentionally differs from the security master
@@ -13,7 +13,6 @@ Run from the repository root:
   python -m day3.ingestion.seed_sample
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -33,123 +32,27 @@ PDF_PATH = OUTPUT_DIR / f"{ISIN}_prospectus.pdf"
 SECTIONS = [
     (
         "Bond Summary",
-        f"""ISIN: {ISIN}
-Issuer: Acme Corporation PLC
-Issue Date: 15 January 2022
-Maturity Date: 15 January 2032
-Principal Amount: USD 500,000,000
-Currency: US Dollar (USD)
-Status: Senior Unsecured
-Governing Law: English Law
-Listing: London Stock Exchange (LSE), International Securities Market
-
-This document constitutes the prospectus for the USD 500,000,000 Senior Unsecured
-Fixed Rate Notes due 2032 issued by Acme Corporation PLC (the "Issuer").
-The Notes are offered pursuant to this Prospectus dated 15 January 2022.""",
+        f"""ISIN: {ISIN}\nIssuer: Acme Corporation PLC\nIssue Date: 15 January 2022\nMaturity Date: 15 January 2032\nPrincipal Amount: USD 500,000,000\nCurrency: US Dollar (USD)\nStatus: Senior Unsecured\nGoverning Law: English Law\nListing: London Stock Exchange (LSE), International Securities Market\n\nThis document constitutes the prospectus for the USD 500,000,000 Senior Unsecured\nFixed Rate Notes due 2032 issued by Acme Corporation PLC (the "Issuer").\nThe Notes are offered pursuant to this Prospectus dated 15 January 2022.""",
     ),
     (
         "Coupon Terms",
-        """COUPON RATE: 4.500% per annum
-Payment Frequency: Semi-annual
-Coupon Payment Dates: 15 January and 15 July of each year, commencing 15 July 2022.
-Day Count Convention: 30/360 (Bond Basis)
-Business Day Convention: Following Business Day Convention
-Business Days: London and New York
-
-The Notes bear interest from and including the Issue Date at the rate of 4.500% per
-annum on their outstanding principal amount. Interest shall accrue from day to day.
-If any interest payment date falls on a day that is not a Business Day, the payment
-shall be made on the next succeeding Business Day.""",
+        """COUPON RATE: 4.500% per annum\nPayment Frequency: Semi-annual\nCoupon Payment Dates: 15 January and 15 July of each year, commencing 15 July 2022.\nDay Count Convention: 30/360 (Bond Basis)\nBusiness Day Convention: Following Business Day Convention\nBusiness Days: London and New York\n\nThe Notes bear interest from and including the Issue Date at the rate of 4.500% per\annum on their outstanding principal amount. Interest shall accrue from day to day.\nIf any interest payment date falls on a day that is not a Business Day, the payment\nshall be made on the next succeeding Business Day.""",
     ),
     (
         "Call Schedule",
-        """ISSUER CALL OPTION
-
-The Issuer may, at its option, redeem all (but not some only) of the Notes on any
-Coupon Payment Date falling on or after 15 January 2027 (the "First Call Date")
-at the following redemption prices:
-
-  - On or after 15 January 2027: par + 0.5% call premium (100.500% of principal)
-  - On or after 15 January 2028: par + 0.375% call premium (100.375% of principal)
-  - On or after 15 January 2029: par + 0.25% call premium (100.250% of principal)
-  - On or after 15 January 2030: par + 0.125% call premium (100.125% of principal)
-  - On or after 15 January 2031: par (100.000% of principal)
-
-The bond may be called at par + 0.5% premium on any coupon date from 15 January 2027.
-
-Notice of redemption must be given by the Issuer to the Noteholders not less than
-15 nor more than 30 days prior to the relevant redemption date. Such notice shall
-be irrevocable and shall specify the redemption date.
-
-Make-Whole Call: Prior to 15 January 2027, the Issuer may redeem all (but not some
-only) of the Notes at a redemption price equal to the greater of (i) the principal
-amount of the Notes and (ii) the sum of the present values of the remaining scheduled
-payments of principal and interest, discounted at the Comparable Treasury Rate plus
-50 basis points, plus in each case accrued and unpaid interest.""",
+        """ISSUER CALL OPTION\n\nThe Issuer may, at its option, redeem all (but not some only) of the Notes on any\nCoupon Payment Date falling on or after 15 January 2027 (the "First Call Date")\nat the following redemption prices:\n\n  - On or after 15 January 2027: par + 0.5% call premium (100.500% of principal)\n  - On or after 15 January 2028: par + 0.375% call premium (100.375% of principal)\n  - On or after 15 January 2029: par + 0.25% call premium (100.250% of principal)\n  - On or after 15 January 2030: par + 0.125% call premium (100.125% of principal)\n  - On or after 15 January 2031: par (100.000% of principal)\n\nThe bond may be called at par + 0.5% premium on any coupon date from 15 January 2027.\n\nNotice of redemption must be given by the Issuer to the Noteholders not less than\n15 nor more than 30 days prior to the relevant redemption date. Such notice shall\nbe irrevocable and shall specify the redemption date.\n\nMake-Whole Call: Prior to 15 January 2027, the Issuer may redeem all (but not some\nonly) of the Notes at a redemption price equal to the greater of (i) the principal\namount of the Notes and (ii) the sum of the present values of the remaining scheduled\npayments of principal and interest, discounted at the Comparable Treasury Rate plus\n50 basis points, plus in each case accrued and unpaid interest.""",
     ),
     (
         "Put Schedule",
-        """NOTEHOLDER PUT OPTION
-
-Each Noteholder has the right to require the Issuer to redeem all or some of that
-Noteholder's Notes on the following dates at the specified prices:
-
-  Put Date 1: 15 January 2027 — at par (100.000% of principal)
-  Put Date 2: 15 January 2029 — at par (100.000% of principal)
-
-To exercise the put option, a Noteholder must deliver a Put Exercise Notice to the
-relevant Paying Agent not less than 30 nor more than 60 days prior to the relevant
-Put Date. Such notice shall be irrevocable.
-
-In the event of a Change of Control, Noteholders will have the right to require the
-Issuer to redeem the Notes at 101.000% of principal plus accrued interest (the
-"Change of Control Put").""",
+        """NOTEHOLDER PUT OPTION\n\nEach Noteholder has the right to require the Issuer to redeem all or some of that\nNoteholder's Notes on the following dates at the specified prices:\n\n  Put Date 1: 15 January 2027 - at par (100.000% of principal)\n  Put Date 2: 15 January 2029 - at par (100.000% of principal)\n\nTo exercise the put option, a Noteholder must deliver a Put Exercise Notice to the\nrelevant Paying Agent not less than 30 nor more than 60 days prior to the relevant\nPut Date. Such notice shall be irrevocable.\n\nIn the event of a Change of Control, Noteholders will have the right to require the\nIssuer to redeem the Notes at 101.000% of principal plus accrued interest (the\n"Change of Control Put").""",
     ),
     (
         "Redemption Terms",
-        """REDEMPTION AT MATURITY
-
-Unless previously redeemed or purchased and cancelled, the Issuer will redeem the
-Notes at par (100.000% of their principal amount) on 15 January 2032 (the
-"Maturity Date") together with accrued and unpaid interest.
-
-TAXATION / GROSS-UP
-
-All payments of principal and interest by the Issuer shall be made without
-withholding or deduction for or on account of any present or future taxes unless
-required by law. If any withholding or deduction is required, the Issuer shall pay
-such additional amounts as may be necessary so that the net amount received equals
-the amount that would have been received in the absence of such withholding.
-
-TAX CALL
-
-The Issuer may redeem all (but not some only) of the Notes at par plus accrued
-interest if, as a result of any change in tax law, the Issuer would be required to
-pay additional amounts in respect of the Notes on the next Interest Payment Date.""",
+        """REDEMPTION AT MATURITY\n\nUnless previously redeemed or purchased and cancelled, the Issuer will redeem the\nNotes at par (100.000% of their principal amount) on 15 January 2032 (the\n"Maturity Date") together with accrued and unpaid interest.\n\nTAXATION / GROSS-UP\n\nAll payments of principal and interest by the Issuer shall be made without\nwithholding or deduction for or on account of any present or future taxes unless\nrequired by law. If any withholding or deduction is required, the Issuer shall pay\nsuch additional amounts as may be necessary so that the net amount received equals\nthe amount that would have been received in the absence of such withholding.\n\nTAX CALL\n\nThe Issuer may redeem all (but not some only) of the Notes at par plus accrued\ninterest if, as a result of any change in tax law, the Issuer would be required to\npay additional amounts in respect of the Notes on the next Interest Payment Date.""",
     ),
     (
         "Covenants",
-        """NEGATIVE PLEDGE
-
-The Issuer will not, and will procure that none of its Principal Subsidiaries will,
-create or permit to subsist any Security over all or any part of its present or
-future assets or revenues to secure any Relevant Indebtedness unless the Notes are
-simultaneously secured equally and ratably with such Relevant Indebtedness.
-
-CROSS-DEFAULT
-
-An Event of Default will occur if (a) any Indebtedness of the Issuer or any
-Principal Subsidiary becomes due and repayable prematurely by reason of an event of
-default (however described) or (b) any such Indebtedness is not paid when due or,
-as the case may be, within any applicable grace period, provided that the aggregate
-amount of all Indebtedness in respect of which one or more of the events mentioned
-above have occurred equals or exceeds USD 50,000,000 (or its equivalent).
-
-REPORTING
-
-The Issuer shall provide to the Trustee within 180 days after each financial year
-end audited consolidated financial statements and within 90 days after each
-half-year end unaudited consolidated interim financial statements.""",
+        """NEGATIVE PLEDGE\n\nThe Issuer will not, and will procure that none of its Principal Subsidiaries will,\ncreate or permit to subsist any Security over all or any part of its present or\nfuture assets or revenues to secure any Relevant Indebtedness unless the Notes are\nsimultaneously secured equally and ratably with such Relevant Indebtedness.\n\nCROSS-DEFAULT\n\nAn Event of Default will occur if (a) any Indebtedness of the Issuer or any\nPrincipal Subsidiary becomes due and repayable prematurely by reason of an event of\ndefault (however described) or (b) any such Indebtedness is not paid when due or,\nas the case may be, within any applicable grace period, provided that the aggregate\namount of all Indebtedness in respect of which one or more of the events mentioned\nabove have occurred equals or exceeds USD 50,000,000 (or its equivalent).\n\nREPORTING\n\nThe Issuer shall provide to the Trustee within 180 days after each financial year\nend audited consolidated financial statements and within 90 days after each\nhalf-year end unaudited consolidated interim financial statements.""",
     ),
 ]
 
@@ -226,8 +129,7 @@ def main() -> None:
 
     ingester = PDFIngester()
     n = ingester.ingest_sync(str(pdf_path), ISIN, document_type="prospectus", force=True)
-    print(f"Seeded prospectus for {ISIN} — {n} chunks stored")
-
+    print(f"Seeded prospectus for {ISIN} - {n} chunks stored")
 
 if __name__ == "__main__":
     main()
