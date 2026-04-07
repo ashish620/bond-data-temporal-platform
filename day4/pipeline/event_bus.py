@@ -57,6 +57,9 @@ class EventBus:
                 break
             try:
                 await asyncio.gather(*(handler(item) for handler in self._subscribers))
+            except asyncio.CancelledError:
+                self._queue.task_done()
+                raise
             except Exception:  # noqa: BLE001
                 logger.exception("EventBus: subscriber raised an exception for event %s", item.event_id)
             finally:

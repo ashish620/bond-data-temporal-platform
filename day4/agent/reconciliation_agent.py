@@ -15,7 +15,7 @@ Phases
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from openai import AsyncOpenAI
@@ -95,7 +95,7 @@ class ReconciliationAgent:
             recommendations=recommendations,
             overall_summary=summary,
             agent_phases=phase_trace,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             status="PENDING",
         )
 
@@ -199,7 +199,11 @@ class ReconciliationAgent:
                     return_exceptions=True,
                 )
                 return {
-                    field: (r if not isinstance(r, Exception) else {"answer": "Not found in prospectus", "confidence": "low", "sources": []})
+                    field: (
+                        r
+                        if not isinstance(r, Exception)
+                        else {"answer": "Not found in prospectus", "confidence": "low", "sources": []}
+                    )
                     for field, r in zip(prospectus_fields, results)
                 }
 

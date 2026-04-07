@@ -13,7 +13,7 @@ GET   /api/v4/audit     — full immutable audit trail
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
@@ -204,7 +204,7 @@ async def decide(request: DecisionRequest) -> DecisionRecord:
         decided_by=request.decided_by,
         notes=request.notes,
         fields_updated=fields_updated,
-        decided_at=datetime.utcnow(),
+        decided_at=datetime.now(timezone.utc),
     )
 
     await store.save_decision(decision_record)

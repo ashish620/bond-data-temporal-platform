@@ -10,7 +10,7 @@ import csv
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -104,7 +104,7 @@ class FileIngestor:
                 snapshot_date=record.snapshot_date,
                 incoming_record=record,
                 mismatches=field_mismatches,
-                emitted_at=datetime.utcnow(),
+                emitted_at=datetime.now(timezone.utc),
             )
             await event_bus.publish(event)
             logger.info(
