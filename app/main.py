@@ -10,6 +10,8 @@ from fastapi import FastAPI
 
 from app.api.bonds import router as bonds_router
 from day3.api.validate import router as validate_router
+from day4.api.reconcile import router as reconcile_router
+from day4.pipeline.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,11 @@ async def lifespan(app: FastAPI):
     # Run seed in thread pool so it doesn't block the event loop
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _seed_if_needed)
+    # Start the Day 4 event bus background processing loop
+    await event_bus.start()
     yield
+    # Gracefully drain and stop the event bus on shutdown
+    await event_bus.stop()
 
 
 app = FastAPI(
@@ -77,3 +83,4 @@ app = FastAPI(
 
 app.include_router(bonds_router, prefix="/api/v1")
 app.include_router(validate_router, prefix="/api/v3")
+app.include_router(reconcile_router, prefix="/api/v4")
