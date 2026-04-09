@@ -1,6 +1,6 @@
 # Bond Data Intelligence Platform
 
-> Unified query platform for time-split bond data — three ways to query: structured API, NLP free-text, and RAG-grounded prospectus validation.
+> Unified query platform for time-split bond data — intelligent routing across dual MongoDB, NLP query interface, RAG-grounded prospectus validation, and event-driven agentic reconciliation.
 
 ---
 
@@ -49,11 +49,12 @@ Legacy MongoDB               Current MongoDB
 
 ## Release Roadmap
 
-| Release | Query Method | Capability | AI Involvement |
-|---------|-------------|-----------|----------------|
-| Day 1 ✅ | Structured API | `GET /api/v1/bonds` — explicit ISIN + date range, temporal routing across dual MongoDB | None — pure intelligent routing |
-| Day 2 🔜 | NLP Query | `POST /api/v1/query` — free-text query, LLM extracts ISIN + date range | LLM extracts structured parameters from natural language |
-| Day 3 🗺️ | NLP + RAG | `POST /api/v1/query` — same interface, answers grounded in bond prospectus PDFs | RAG over prospectus PDFs — vector retrieval + LLM generation with mismatch detection |
+| Release | Capability | AI Involvement |
+|---------|-----------|----------------|
+| Day 1 ✅ | Structured API — `GET /api/v1/bonds` — explicit ISIN + date range, temporal routing across dual MongoDB | None — pure intelligent routing |
+| Day 2 ✅ | NLP Query — `POST /api/v1/query` — free-text query, LLM extracts ISIN + date range | LLM extracts structured parameters from natural language |
+| Day 3 ✅ | NLP + RAG — `POST /api/v3/validate/{isin}` — answers grounded in bond prospectus PDFs, mismatch detection vs security master | RAG over prospectus PDFs — vector retrieval + LLM generation |
+| Day 4 ✅ | Event-Driven Agentic Reconciliation — `POST /api/v4/ingest` — streaming file ingestion, per-record mismatch detection, concurrent AI agent instances (Plan→Execute→Validate→Resolve), human approval workflow, immutable audit trail | Agentic AI — LLM-driven 4-phase reasoning per record, tool-calling over legacy DB, current DB and prospectus |
 
 ---
 
@@ -141,17 +142,100 @@ curl "http://localhost:8000/api/v1/bonds?isin=XS1234567890&from_date=2025-06-01&
 }
 ```
 
-### `POST /api/v1/query` *(stubbed — Day 2)*
+### `POST /api/v1/query`
+
+Send a free-text natural language query. The LLM extracts the ISIN and date range, then routes to the appropriate MongoDB instance(s).
+
+**Example:**
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/query"
+curl -X POST "http://localhost:8000/api/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Show me XS1234567890 bond data from January to June 2025"}'
 ```
 
 ```json
 {
-  "message": "NLP query interface coming in Day 2 — LLM will extract structured parameters from natural language input",
-  "status": "not_implemented"
+  "extracted_isin": "XS1234567890",
+  "extracted_from_date": "2025-01-01",
+  "extracted_to_date": "2025-06-30",
+  "natural_query": "Show me XS1234567890 bond data from January to June 2025",
+  "sources": "legacy",
+  "data": [
+    {
+      "isin": "XS1234567890",
+      "snapshot_date": "2025-01-15",
+      "issuer_name": "Acme Corp",
+      "maturity_date": "2030-01-15",
+      "coupon_rate": 3.5,
+      "currency": "USD",
+      "face_value": 1000.0,
+      "source": "legacy"
+    }
+  ]
 }
+```
+
+---
+
+## Day 4 — Agentic Reconciliation (`/api/v4`)
+
+### The Problem It Solves
+
+Operations teams receive daily feeds of security records from counterparties, custodians, or upstream systems. Reconciling each incoming record against the internal security master is tedious, error-prone, and slow when done manually. Day 4 automates this entirely — streaming each record, detecting mismatches field-by-field, spawning a concurrent AI agent per mismatch, and surfacing a human-approved resolution with an immutable audit trail.
+
+### Architecture
+
+- **Event-driven, not batch** — records are streamed one-by-one through a `FileIngestor`; each mismatch immediately publishes a `ReconciliationEvent` to an async `EventBus`.
+- **One agent class, N concurrent instances** — a `ReconciliationAgent` is spawned per event; instances run concurrently via `asyncio`.
+- **4-phase reasoning** — each agent reasons through Plan → Execute → Validate → Resolve, using tool-calls against legacy DB, current DB, and the prospectus RAG index.
+- **Human-in-the-loop** — agent findings are stored as PENDING; a human operator calls `/api/v4/decide` to APPROVE or REJECT.
+- **Immutable audit trail** — every decision (with timestamp, operator, and notes) is written to an append-only MongoDB collection and exposed via `/api/v4/audit`.
+
+### `POST /api/v4/ingest`
+
+Upload a CSV or JSON file of security records. Records are streamed one-by-one. For each record with a mismatch against the security master, a `ReconciliationEvent` is published and a concurrent AI agent instance is spawned.
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/api/v4/ingest \
+  -F "file=@bonds.csv"
+```
+
+```json
+{
+  "total_records": 5,
+  "mismatches_found": 2,
+  "events_published": 2,
+  "message": "Ingested 5 record(s); 2 mismatch(es) found; 2 reconciliation event(s) published."
+}
+```
+
+### `GET /api/v4/findings`
+
+List agent findings awaiting approval. Filter by `status` (PENDING/APPROVED/REJECTED) and/or `isin`.
+
+```bash
+curl "http://localhost:8000/api/v4/findings?status=PENDING"
+```
+
+### `POST /api/v4/decide`
+
+Accept or reject an agent recommendation. On APPROVE, master data is updated. All decisions are immutably logged.
+
+```bash
+curl -X POST http://localhost:8000/api/v4/decide \
+  -H "Content-Type: application/json" \
+  -d '{"finding_id":"abc123","decision":"APPROVE","decided_by":"analyst1","notes":"Verified"}'
+```
+
+### `GET /api/v4/audit`
+
+Full immutable audit trail of all decisions ever made.
+
+```bash
+curl http://localhost:8000/api/v4/audit
 ```
 
 ---
@@ -171,6 +255,9 @@ pytest -v
 # Run specific test file
 pytest tests/test_router.py -v
 pytest tests/test_api.py -v
+pytest tests/test_nlp.py -v
+pytest tests/test_rag.py -v
+pytest tests/test_day4_comparator.py -v
 ```
 
 Tests do **not** require running MongoDB instances — all DB interactions are mocked.
@@ -188,19 +275,33 @@ bond-data-intelligence-platform/
 │   ├── router.py            ← TemporalRouter core engine
 │   ├── models.py            ← Bond data models (Pydantic v2)
 │   └── api/
-│       └── bonds.py         ← API endpoints
+│       └── bonds.py         ← API endpoints (Day 1 + Day 2)
+│
+├── day3/                    ← RAG prospectus validation
+│   ├── ingestion/           ← PDF ingestion + ChromaDB
+│   ├── rag/                 ← RAG query engine
+│   └── api/                 ← POST /api/v3/validate/{isin}
+│
+├── day4/                    ← Event-driven agentic reconciliation
+│   ├── agent/               ← ReconciliationAgent (4-phase)
+│   ├── pipeline/            ← EventBus, FileIngestor, Comparator
+│   ├── store/               ← MasterStore + DecisionStore (MongoDB)
+│   └── api/                 ← /api/v4 endpoints
 │
 ├── tests/
 │   ├── test_router.py       ← Routing logic and boundary condition tests
-│   └── test_api.py          ← API endpoint and pagination tests
+│   ├── test_api.py          ← API endpoint and pagination tests
+│   ├── test_nlp.py          ← NLP extractor tests
+│   ├── test_rag.py          ← RAG pipeline tests
+│   └── test_day4_comparator.py ← Day 4 comparator unit tests
 │
 ├── seed/
 │   └── seed_data.py         ← Seed script for both MongoDB containers
 │
-├── docker-compose.yml       ← Two MongoDB containers + seed service
+├── docker-compose.yml       ← Two MongoDB containers + seed service + API
 ├── Dockerfile
-├── requirements.txt         ← All Python dependencies
-├── .env.example             ← MongoDB connection string placeholders
+├── requirements.txt
+├── .env.example
 └── README.md
 ```
 
