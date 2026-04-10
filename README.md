@@ -4,9 +4,36 @@
 
 ---
 
+**TL;DR**
+An AI-powered platform for financial security master systems that:
+- unifies time-split data across dual MongoDB instances into a single seamless query interface
+- enables natural language querying with LLM-extracted parameters
+- validates data using RAG over PDF prospectus documents
+- automates reconciliation using agentic workflows with human-in-the-loop approval
+
+---
+
 ## Why This Exists
 
 This project originated from a real business problem identified and proposed at a previous firm — security master data for bonds was siloed across two systems with a hard time boundary, making unified querying impossible without manual intervention. Rather than proposing a simple data migration, this platform abstracts the time-split complexity entirely — routing queries intelligently across systems and merging results seamlessly into a single unified response.
+
+---
+
+## Why This Problem Is Hard
+
+- **Data split across systems with inconsistent boundaries** — historical and live data live in separate databases with a hard time cutoff; no unified view exists without custom routing logic.
+- **No single source of truth** — the security master, prospectus documents, legacy DB, and incoming feeds can all disagree, each for legitimate reasons.
+- **Prospectus documents are unstructured** — authoritative bond terms are buried in PDFs; extracting them reliably requires vector search and grounded LLM generation.
+- **Reconciliation requires contextual judgment** — knowing *which* value is correct for a given field demands reasoning about source reliability, not just flagging differences.
+- **High risk of incorrect overrides without auditability** — automated decisions over financial master data must be human-approved and immutably logged.
+
+---
+
+## Design Philosophy
+
+- **Deterministic where possible** — routing, comparison, and field matching are pure Python with zero LLM cost and fully predictable behaviour.
+- **AI where necessary** — interpretation, source arbitration, and natural language explanation are delegated to the LLM only when rule-based logic cannot reason about context.
+- **Human where required** — all agent recommendations require explicit operator approval before any master data is mutated; every decision is immutably logged.
 
 ---
 
@@ -187,26 +214,26 @@ Operations teams receive daily feeds of security records from counterparties, cu
 ### Architecture
 
 - **Event-driven, not batch** — records are streamed one-by-one through a `FileIngestor`; each mismatch immediately publishes a `ReconciliationEvent` to an async `EventBus`.
-- **One agent class, N concurrent instances** — a `ReconciliationAgent` is spawned per event; instances run concurrently via `asyncio`.
+- **One agent class, one per event** — a `ReconciliationAgent` is spawned per event; the event bus processes events sequentially, but within each agent run, source fetches (Phase 2) and field assessments (Phase 3) execute concurrently via `asyncio.gather`.
 - **4-phase reasoning** — each agent reasons through Plan → Execute → Validate → Resolve, using tool-calls against legacy DB, current DB, and the prospectus RAG index.
 - **Human-in-the-loop** — agent findings are stored as PENDING; a human operator calls `/api/v4/decide` to APPROVE or REJECT.
 - **Immutable audit trail** — every decision (with timestamp, operator, and notes) is written to an append-only MongoDB collection and exposed via `/api/v4/audit`.
 
-### Where Intelligence Is Applied
+### Where AI Is Used (and Where It Is Not)
 
 The system uses LLM reasoning at **four precise points** — not indiscriminately. This is intentional to keep costs bounded and latency predictable.
 
 | Phase | Where LLM Is Used | What It Does |
 |---|---|---|
 | **Phase 1 — Plan** | `gpt-4o-mini` (JSON mode) | Given the mismatched fields and ISIN, decides which data sources are worth querying. Avoids fetching all three sources blindly — e.g. skips prospectus lookup for `face_value` mismatches where the document is unlikely to resolve the dispute. |
-| **Phase 2 — Execute** | `text-embedding-ada-002` | Embeds per-field natural language questions for prospectus vector search. Only called for fields the Plan phase flagged as worth checking in the prospectus. |
+| **Phase 2 — Execute** | `text-embedding-ada-002` + `gpt-4o-mini` | Embeds per-field natural language questions for prospectus vector search, then generates a grounded answer from retrieved chunks. Only called for fields the Plan phase flagged as worth checking in the prospectus. |
 | **Phase 3 — Validate** | `gpt-4o-mini` (JSON mode) | For each mismatched field, interprets all four data points — incoming value, master value, historical legacy snapshots, and prospectus answer — and decides which source is most likely correct and why. This is where mismatch interpretation happens: it doesn't just flag differences, it reasons about which side is right. |
 | **Phase 4 — Resolve** | `gpt-4o-mini` | Synthesises all field-level assessments into a human-readable summary explaining the overall situation for the analyst reviewing the finding. |
 
 Key design choices:
 - **Interpretation, not just detection**: The comparator (pure Python, no LLM) detects mismatches. The agent interprets them — deciding which source to trust, what the likely cause is, and what action to recommend.
 - **Reasoning is explicit**: Each `AgentRecommendation` includes a `reasoning` field containing the agent's natural-language explanation — the analyst sees exactly why the agent recommended `KEEP_MASTER` or `ACCEPT_INCOMING`, not just the outcome.
-- **Source trust hierarchy**: The agent considers prospectus > historical consistency > current master > incoming value, but this hierarchy is reasoned about per-field — not hard-coded. A coupon rate that differs from the prospectus by 5bps will be flagged differently to an issuer name that differs only in capitalisation.
+- **Source trust hierarchy**: The agent is given all four data points — prospectus answer, historical legacy values, current master value, and incoming value — and asked to determine which is most authoritative. The hierarchy (prospectus > historical consistency > current master > incoming value) emerges from the LLM's domain knowledge rather than being encoded in the prompt.
 
 ### Confidence Scoring
 
@@ -221,16 +248,15 @@ Confidence is derived from the mean cosine distance of retrieved ChromaDB chunks
 | 0.3 – 0.6 | `medium` — relevant context found but not an exact match |
 | > 0.6 | `low` — chunks retrieved are loosely related; answer may be unreliable |
 
-**Agent layer (Phase 3 — Validate):**
-The `assess_field_consistency()` tool asks `gpt-4o-mini` to also return a confidence label alongside its recommendation. Factors that lower confidence:
-- Prospectus lookup returned `"Not found in prospectus"` — only two sources to compare
-- Historical legacy values are inconsistent across snapshots (multiple conflicting values in DB)
-- The two values differ in a way that could be a genuine business change (e.g. refinancing) rather than a data error
+**How confidence is assigned (Phase 4 — Resolve):**
+`confidence` on each `AgentRecommendation` is derived from the Phase 3 recommended action and the Phase 2 prospectus RAG confidence. `assess_field_consistency()` returns a recommended action and reasoning but does not return a confidence label itself.
 
-**How confidence affects the workflow:**
-- `high` confidence → agent recommends `ACCEPT_INCOMING` or `KEEP_MASTER` definitively
-- `medium` confidence → agent may still make a recommendation but flags it for closer review
-- `low` confidence → agent always recommends `MANUAL_REVIEW` regardless of which value looks more plausible
+| Condition | Confidence |
+|---|---|
+| `MANUAL_REVIEW` action (any cause) | `"low"` |
+| `ACCEPT_INCOMING` / `KEEP_MASTER` + high RAG confidence | `"high"` |
+| `ACCEPT_INCOMING` / `KEEP_MASTER` + medium RAG confidence | `"medium"` |
+| `ACCEPT_INCOMING` / `KEEP_MASTER` + low or absent RAG confidence | `"low"` |
 
 ### Failure Handling & Graceful Degradation
 
@@ -240,10 +266,10 @@ The agent is designed to never crash the pipeline. Each failure mode is handled 
 |---|---|
 | **No prospectus ingested for ISIN** | `query_prospectus()` catches `ValueError` from `RAGQueryEngine` and returns `{"answer": "Not found in prospectus", "confidence": "low"}`. Agent continues with only DB sources. |
 | **Legacy/Current DB returns no snapshots** | Agent proceeds with empty historical context. Phase 3 assess call receives an empty list for `legacy_values`. Confidence degrades to `low` or `medium`. |
-| **LLM call fails (OpenAI timeout/rate limit)** | Each LLM call in Phase 1, 3, 4 is wrapped in try/except. On failure the agent returns a `MANUAL_REVIEW` recommendation with `confidence: "low"` and a `reasoning` explaining the failure. The finding is still saved to `DecisionStore` — the analyst sees the raw mismatch data even if the agent couldn't reason about it. |
+| **LLM call fails (OpenAI timeout/rate limit)** | Each LLM call is wrapped in try/except. **Phase 1 failure:** falls back to querying all three sources (safe defaults — processing continues normally). **Phase 3 failure:** field assessment returns `MANUAL_REVIEW` with a failure reasoning; confidence is set to `"low"`. **Phase 4 failure:** a canned summary is substituted. The finding is saved to `DecisionStore` in all cases. |
 | **Master record not found** | If `MasterStore.get()` returns `None` (ISIN+date not in security master), the record is treated as a new record — no mismatch is possible, no event is published. |
 | **Malformed CSV/JSON row** | `FileIngestor` skips malformed rows and logs a warning. Processing continues for valid rows. |
-| **Event bus subscriber crash** | Wrapped in try/except; failure of one agent instance does not affect other concurrent instances. |
+| **Event bus subscriber crash** | Subscriber exceptions are caught and logged; the event bus loop continues processing subsequent events. Events are processed sequentially (one at a time), so a crash does not affect subsequent event handling. |
 
 ### Cost Awareness & Operational Considerations
 
