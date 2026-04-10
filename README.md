@@ -192,6 +192,87 @@ Operations teams receive daily feeds of security records from counterparties, cu
 - **Human-in-the-loop** — agent findings are stored as PENDING; a human operator calls `/api/v4/decide` to APPROVE or REJECT.
 - **Immutable audit trail** — every decision (with timestamp, operator, and notes) is written to an append-only MongoDB collection and exposed via `/api/v4/audit`.
 
+### Where Intelligence Is Applied
+
+The system uses LLM reasoning at **four precise points** — not indiscriminately. This is intentional to keep costs bounded and latency predictable.
+
+| Phase | Where LLM Is Used | What It Does |
+|---|---|---|
+| **Phase 1 — Plan** | `gpt-4o-mini` (JSON mode) | Given the mismatched fields and ISIN, decides which data sources are worth querying. Avoids fetching all three sources blindly — e.g. skips prospectus lookup for `face_value` mismatches where the document is unlikely to resolve the dispute. |
+| **Phase 2 — Execute** | `text-embedding-ada-002` | Embeds per-field natural language questions for prospectus vector search. Only called for fields the Plan phase flagged as worth checking in the prospectus. |
+| **Phase 3 — Validate** | `gpt-4o-mini` (JSON mode) | For each mismatched field, interprets all four data points — incoming value, master value, historical legacy snapshots, and prospectus answer — and decides which source is most likely correct and why. This is where mismatch interpretation happens: it doesn't just flag differences, it reasons about which side is right. |
+| **Phase 4 — Resolve** | `gpt-4o-mini` | Synthesises all field-level assessments into a human-readable summary explaining the overall situation for the analyst reviewing the finding. |
+
+Key design choices:
+- **Interpretation, not just detection**: The comparator (pure Python, no LLM) detects mismatches. The agent interprets them — deciding which source to trust, what the likely cause is, and what action to recommend.
+- **Reasoning is explicit**: Each `AgentRecommendation` includes a `reasoning` field containing the agent's natural-language explanation — the analyst sees exactly why the agent recommended `KEEP_MASTER` or `ACCEPT_INCOMING`, not just the outcome.
+- **Source trust hierarchy**: The agent considers prospectus > historical consistency > current master > incoming value, but this hierarchy is reasoned about per-field — not hard-coded. A coupon rate that differs from the prospectus by 5bps will be flagged differently to an issuer name that differs only in capitalisation.
+
+### Confidence Scoring
+
+Every `AgentRecommendation` carries a `confidence` field: `"high"`, `"medium"`, or `"low"`. This is determined differently at each layer:
+
+**RAG layer (Phase 2 — Prospectus lookup):**
+Confidence is derived from the mean cosine distance of retrieved ChromaDB chunks:
+
+| Mean Distance | Confidence |
+|---|---|
+| < 0.3 | `high` — prospectus excerpt is a strong match for the question |
+| 0.3 – 0.6 | `medium` — relevant context found but not an exact match |
+| > 0.6 | `low` — chunks retrieved are loosely related; answer may be unreliable |
+
+**Agent layer (Phase 3 — Validate):**
+The `assess_field_consistency()` tool asks `gpt-4o-mini` to also return a confidence label alongside its recommendation. Factors that lower confidence:
+- Prospectus lookup returned `"Not found in prospectus"` — only two sources to compare
+- Historical legacy values are inconsistent across snapshots (multiple conflicting values in DB)
+- The two values differ in a way that could be a genuine business change (e.g. refinancing) rather than a data error
+
+**How confidence affects the workflow:**
+- `high` confidence → agent recommends `ACCEPT_INCOMING` or `KEEP_MASTER` definitively
+- `medium` confidence → agent may still make a recommendation but flags it for closer review
+- `low` confidence → agent always recommends `MANUAL_REVIEW` regardless of which value looks more plausible
+
+### Failure Handling & Graceful Degradation
+
+The agent is designed to never crash the pipeline. Each failure mode is handled explicitly:
+
+| Failure Mode | Behaviour |
+|---|---|
+| **No prospectus ingested for ISIN** | `query_prospectus()` catches `ValueError` from `RAGQueryEngine` and returns `{"answer": "Not found in prospectus", "confidence": "low"}`. Agent continues with only DB sources. |
+| **Legacy/Current DB returns no snapshots** | Agent proceeds with empty historical context. Phase 3 assess call receives an empty list for `legacy_values`. Confidence degrades to `low` or `medium`. |
+| **LLM call fails (OpenAI timeout/rate limit)** | Each LLM call in Phase 1, 3, 4 is wrapped in try/except. On failure the agent returns a `MANUAL_REVIEW` recommendation with `confidence: "low"` and a `reasoning` explaining the failure. The finding is still saved to `DecisionStore` — the analyst sees the raw mismatch data even if the agent couldn't reason about it. |
+| **Master record not found** | If `MasterStore.get()` returns `None` (ISIN+date not in security master), the record is treated as a new record — no mismatch is possible, no event is published. |
+| **Malformed CSV/JSON row** | `FileIngestor` skips malformed rows and logs a warning. Processing continues for valid rows. |
+| **Event bus subscriber crash** | Wrapped in try/except; failure of one agent instance does not affect other concurrent instances. |
+
+### Cost Awareness & Operational Considerations
+
+#### The Cost Risk: One Agent Per Mismatch
+
+The current design spawns one agent instance per mismatched record, with each instance making **3–5 LLM API calls** (Plan, per-field Validate × N, Resolve). For a file with 500 mismatches, that is potentially **1,500–2,500 LLM calls in a single ingest**.
+
+At `gpt-4o-mini` pricing (~$0.15/1M input tokens), this is manageable for small files. But for large daily feeds with hundreds of mismatches, cost can compound quickly — especially when each Validate call sends the full context (incoming value + master value + historical snapshots + prospectus excerpt).
+
+#### Mitigations Built In
+
+| Mitigation | How It Works |
+|---|---|
+| **Phase 1 Planning limits tool calls** | The Plan phase decides which sources to query. If the LLM determines the prospectus is unlikely to help for a given field, `query_prospectus()` is never called — saving an embedding call + ChromaDB query + LLM generation call. |
+| **Short-circuit on identical records** | The `Comparator` runs in pure Python with zero LLM cost. Records with no mismatches never trigger an agent at all. Only genuinely differing records enter the pipeline. |
+| **gpt-4o-mini, not gpt-4o** | All agent reasoning uses `gpt-4o-mini` — approximately 15× cheaper than `gpt-4o` with sufficient reasoning quality for structured financial data comparison tasks. |
+
+#### Recommended Mitigations for Production
+
+These are not currently implemented but are the natural next steps for production deployment:
+
+| Recommendation | Rationale |
+|---|---|
+| **Mismatch severity threshold** | Only trigger the agent if the mismatch exceeds a materiality threshold (e.g. coupon rate delta > 5bps, face value delta > 0.1%). Cosmetic differences (capitalisation, whitespace) are resolved by the comparator without an LLM. |
+| **Batch mismatches by ISIN** | If 20 records for the same ISIN have mismatches, run one agent that fetches the ISIN's DB history and prospectus once, then assesses all 20 records in a single LLM call. Reduces API calls by up to 20×. |
+| **Priority queue** | Process high-value ISINs (large face value, active bonds) first. Deprioritise or skip agent reasoning for low-value or matured bonds. |
+| **Confidence-gated escalation** | Only call the expensive Validate + Resolve phases if Phase 1 planning returns `check_prospectus: true`. Records where both DB sources agree with each other (and only differ from incoming) can be resolved by rule with no further LLM cost. |
+| **Cost cap per ingest** | Set a maximum agent invocation count per file upload. If the file contains more mismatches than the cap, queue the remainder for async processing or flag for batch review. |
+
 ### `POST /api/v4/ingest`
 
 Upload a CSV or JSON file of security records. Records are streamed one-by-one. For each record with a mismatch against the security master, a `ReconciliationEvent` is published and a concurrent AI agent instance is spawned.
