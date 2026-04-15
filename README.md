@@ -15,7 +15,7 @@ An AI-powered platform for financial security master systems that:
 
 ## Why This Exists
 
-This project originated from a real business problem identified and proposed at a previous firm — security master data for bonds was siloed across two systems with a hard time boundary, making unified querying impossible without manual intervention. Rather than proposing a simple data migration, this platform abstracts the time-split complexity entirely — routing queries intelligently across systems and merging results seamlessly into a single unified response.
+This project is inspired by common challenges in financial data systems, where security master data for bonds is often siloed across multiple systems with time boundaries, making unified querying difficult without manual intervention. Rather than proposing a simple data migration, this platform abstracts the time-split complexity entirely — routing queries intelligently across systems and merging results seamlessly into a single unified response.
 
 ---
 
