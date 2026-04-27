@@ -1,0 +1,7 @@
+name,issuer,tenor,type,isin
+Apple Inc Bond 2028,Apple,2028,bond,US0378331005
+Apple Inc Bond 2030,Apple,2030,bond,US0378331006
+US Treasury 10Y,US Treasury,10Y,bond,US9128285M81
+US Treasury 5Y,US Treasury,5Y,bond,US9128285M82
+Gold ETF,Gold,,etf,US78463V1070
+Microsoft Corp Bond 2030,Microsoft,2030,bond,US5949181045
