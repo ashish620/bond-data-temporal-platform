@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  # Legacy MongoDB — bond snapshots before 2026-01-01
+  legacy-mongo:
+    image: mongo:7
+    container_name: legacy-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - legacy-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Current MongoDB — bond snapshots from 2026-01-01 onwards
+  current-mongo:
+    image: mongo:7
+    container_name: current-mongo
+    ports:
+      - "27018:27017"
+    volumes:
+      - current-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Seed service — populates both DBs with realistic sample bond snapshots
+  seed:
+    build: .
+    container_name: bond-seed
+    command: python seed/seed_data.py
+    environment:
+      - LEGACY_MONGO_URI=mongodb://legacy-mongo:27017
+      - CURRENT_MONGO_URI=mongodb://current-mongo:27018
+      - LEGACY_DB_NAME=legacy_bonds
+      - CURRENT_DB_NAME=current_bonds
+    depends_on:
+      legacy-mongo:
+        condition: service_healthy
+      current-mongo:
+        condition: service_healthy
+    restart: "no"
+
+  # FastAPI application
+  api:
+    build: .
+    container_name: bond-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - LEGACY_MONGO_URI=mongodb://legacy-mongo:27017
+      - CURRENT_MONGO_URI=mongodb://current-mongo:27018
+      - LEGACY_DB_NAME=legacy_bonds
+      - CURRENT_DB_NAME=current_bonds
+    depends_on:
+      legacy-mongo:
+        condition: service_healthy
+      current-mongo:
+        condition: service_healthy
+
+volumes:
+  legacy-mongo-data:
+  current-mongo-data:
